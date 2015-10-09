@@ -194,8 +194,9 @@ class KVS:
         with open('.%s.defrag' % self.path, 'wb') as file:
             for kv in self._kvs:
                 if kv.used:
-                    kv.addr = file.tell()
+                    addr = file.tell()
                     file.write(struct.pack(meta_fmt, kv.used, kv.ksize, kv.vsize) + pad(kv.key + kv.value))
+                    kv.addr = addr
         os.rename('.%s.defrag' % self.path, self.path)
         self.file.close()
         self.file = open(self.path, 'rb+')
