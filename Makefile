@@ -13,7 +13,7 @@ AR=ar
 SO=$(CC)
 LD=$(CC)
 
-CC_FLAGS=-I$(INC_DIR) -fPIC -Wall -Werror -Os
+CC_FLAGS=-I$(INC_DIR) -fPIC -Wall -Werror -Os -g3
 AR_FLAGS=rcs
 SO_FLAGS=-shared
 LD_FLAGS=

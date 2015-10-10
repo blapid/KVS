@@ -2,7 +2,7 @@
 
 #include <stdio.h> // FILE*
 
-#define KVS_INIT {NULL, NULL, NULL}
+#define KVS_INIT {NULL, 0, NULL, 0, NULL}
 
 #define KVS_OK                 (0)
 #define KVS_ERROR              (-1)
@@ -19,20 +19,27 @@ typedef struct kvs_value_t
 
 typedef struct kv_t
 {
-    long   addr;
     char   used;
     char   ksize;
+    //alignment
+    short  unused;
     int    vsize;
-    char*  key;
-    struct kv_t* prev;
-    struct kv_t* next;
 } kv_t;
+
+typedef struct kv_index_t
+{
+  long offset;
+  struct kv_index_t *prev;
+  struct kv_index_t *next;
+} kv_index_t;
 
 typedef struct kvs_t
 {
     char* path;
-    FILE* fp;
-    kv_t* kv;
+    int fd;
+    void* base;
+    size_t map_size;
+    kv_index_t* kv_index;
 } kvs_t;
 
 int kvs_open(kvs_t* kvs, char* path);
