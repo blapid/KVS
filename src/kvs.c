@@ -12,7 +12,7 @@
 #define KVS_ALIGN(n)    (((n) % KVS_HEADER_SIZE == 0) ? (n) : (n) + (KVS_HEADER_SIZE - ((n) % KVS_HEADER_SIZE)))
 #define KVS_PADDING(n)  (KVS_ALIGN(n) - (n))
 #define KVS_SIZE(kv)    (KVS_ALIGN((kv)->ksize + (kv)->vsize))
-#define FOR(kvs, i)     for (i = kvs->kv_index->next; i != NULL; i = i->next)
+#define FOR(kvs, i)     for (i = kvs->kv_index; i != NULL; i = i->next)
 
 inline kv_t *kvs_kv_from_index(kvs_t *kvs, kv_index_t *kv_index)
 {
@@ -47,8 +47,8 @@ inline int kvs_vsize_from_index(kvs_t *kvs, kv_index_t *kv_index)
 
 inline int kvs_size_from_index(kvs_t *kvs, kv_index_t *kv_index)
 {
-    return KVS_HEADER_SIZE + kvs_ksize_from_index(kvs, kv_index)
-        + kvs_vsize_from_index(kvs, kv_index);
+    return KVS_HEADER_SIZE + KVS_ALIGN(kvs_ksize_from_index(kvs, kv_index)
+        + kvs_vsize_from_index(kvs, kv_index));
 }
 
 static kv_index_t* kvs_allocate_kv_index(long offset)
@@ -91,16 +91,21 @@ static void kvs_append_kv_index(kvs_t* kvs, kv_index_t* kv, kv_index_t* new_kv)
 
 static void kvs_insert_kv_index(kvs_t* kvs, kv_index_t* kv)
 {
-    if (kvs->kv_index->prev == NULL)
-    {
-        kvs->kv_index->next = kv;
-        kv->prev = kvs->kv_index;
-        kvs->kv_index->prev = kv;
-    }
-    else
-    {
-        kvs_append_kv_index(kvs, kvs->kv_index->prev, kv);
-    }
+	if (kvs->kv_index == NULL)
+	{
+		kvs->kv_index = kv;
+		kv->prev = kv;
+	}
+	else if (kvs->kv_index->prev == NULL)
+	{
+		kvs->kv_index->next = kv;
+		kv->prev = kvs->kv_index;
+		kvs->kv_index->prev = kv;
+	}
+	else
+	{
+		kvs_append_kv_index(kvs, kvs->kv_index->prev, kv);
+	}
 }
 
 static void kvs_delete_kv_index(kvs_t* kvs, kv_index_t* kv)
@@ -109,11 +114,17 @@ static void kvs_delete_kv_index(kvs_t* kvs, kv_index_t* kv)
     {
         kv->next->prev = kv->prev;
     }
-    kv->prev->next = kv->next;
-
     if (kvs->kv_index->prev == kv)
     {
         kvs->kv_index->prev = kv->prev;
+    }
+    if (kvs->kv_index == kv)
+    {
+        kvs->kv_index = kv->next;
+    }
+    else
+    {
+        kv->prev->next = kv->next;
     }
 }
 
@@ -133,7 +144,7 @@ static int kvs_load(kvs_t* kvs)
 
         kvs_insert_kv_index(kvs, kv_index);
 
-        offset += sizeof(kv_t) + kv->ksize + kv->vsize;
+        offset += sizeof(kv_t) + KVS_ALIGN(kv->ksize + kv->vsize);
     }
 
     return 0;
@@ -171,13 +182,6 @@ int kvs_open(kvs_t* kvs, char* path)
         kvs->map_size = st.st_size;
     }
 
-    kvs->kv_index = kvs_allocate_kv_index(-1);
-    if (kvs->kv_index == NULL)
-    {
-        close(kvs->fd);
-        return KVS_ERROR;
-    }
-
     if (kvs_load(kvs) != 0)
     {
         kvs_close(kvs);
@@ -192,7 +196,7 @@ void kvs_close(kvs_t* kvs)
     kv_index_t* kv_index   = NULL;
     kv_index_t* next_index = NULL;
 
-    kv_index = kvs->kv_index->next;
+    kv_index = kvs->kv_index;
     while (kv_index != NULL)
     {
         next_index = kv_index->next;
@@ -201,7 +205,6 @@ void kvs_close(kvs_t* kvs)
         kv_index = next_index;
     }
 
-    kvs_deallocate_kv_index(kvs->kv_index);
     munmap(kvs->base, kvs->map_size);
     kvs->base = 0;
     close(kvs->fd);
@@ -323,7 +326,7 @@ int kvs_set(kvs_t* kvs, char* key, kvs_value_t* value)
         kv_index_t *new_kv_index = NULL;
         kv_t* new_kv = NULL;
         //TODO: Should probably page align the size. And move this to its own function
-        int new_size = kvs->map_size + KVS_HEADER_SIZE + ksize + vsize;
+        int new_size = kvs->map_size + KVS_HEADER_SIZE + KVS_ALIGN(ksize + vsize);
         void *new_base = NULL;
         //XXX: This can also decrease the size of the file if used after defragment. Will have to consider this in the future.
         if (ftruncate(kvs->fd, new_size) != 0)
@@ -347,10 +350,10 @@ int kvs_set(kvs_t* kvs, char* key, kvs_value_t* value)
             kvs->base = new_base;
         }
         kvs->map_size = new_size;
-        if (kv_index != NULL)
+        if (kvs->kv_index != NULL)
         {
-            new_offset = kv_index->offset +
-                kvs_size_from_index(kvs, kv_index);
+            new_offset = kvs->kv_index->prev->offset +
+                kvs_size_from_index(kvs, kvs->kv_index->prev);
         }
         else
         {
@@ -389,7 +392,7 @@ int kvs_delete(kvs_t* kvs, char* key)
         kv = kvs_kv_from_index(kvs, kv_index);
         if (kv->used && ksize == kv->ksize && strncmp(key, kvs_key_from_index(kvs, kv_index), ksize) == 0)
         {
-            kv->unused = 0;
+            kv->used = 0;
             kv->vsize = KVS_SIZE(kv);
             kv->ksize = 0;
 
